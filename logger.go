@@ -28,12 +28,11 @@ type (
 	//the buf content will be synced to elastich search datastream in tick
 	//period or if buf size exceed bufMaxSize
 	ESLogger struct {
-		url       string
-		config    ESLoggerConfig
-		data      chan map[string]interface{}
-		buf       *bytes.Buffer
-		transport http.RoundTripper
-		done      chan struct{}
+		url    string
+		config ESLoggerConfig
+		data   chan map[string]interface{}
+		buf    *bytes.Buffer
+		done   chan struct{}
 	}
 )
 
@@ -88,6 +87,7 @@ func New(eslc *ESLoggerConfig) *ESLogger {
 		url:    fmt.Sprintf("%s/%s/_bulk", eslc.address, eslc.streamName),
 		data:   make(chan map[string]interface{}, 32),
 		buf:    bytes.NewBuffer(make([]byte, 0, eslc.bufMaxSize)),
+		done:   make(chan struct{}),
 	}
 }
 
@@ -177,9 +177,9 @@ func (esds *ESLogger) putData(ctx context.Context) error {
 	req.Header.Add("Content-Type", "application/json")
 
 	var client *http.Client
-	if esds.transport != nil {
+	if esds.config.transport != nil {
 		client = &http.Client{
-			Transport: esds.transport,
+			Transport: esds.config.transport,
 		}
 	} else {
 		client = http.DefaultClient
@@ -189,13 +189,16 @@ func (esds *ESLogger) putData(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("do http request fail %w", err)
 	}
+	var (
+		raw []byte
+	)
+
 	if resp.Body != nil {
 		defer resp.Body.Close()
-	}
-
-	raw, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read body error %w", err)
+		raw, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read body error %w", err)
+		}
 	}
 
 	if resp.StatusCode > 299 {
