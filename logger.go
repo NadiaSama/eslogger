@@ -14,20 +14,25 @@ import (
 )
 
 type (
-	ESDataStreamConfig struct {
-		Address    string
-		StreamName string
-		Tick       time.Duration
-		BufMaxSize int
+	//ESLoggerConfig define the config property which used to create ESlogger instance
+	ESLoggerConfig struct {
+		address    string
+		streamName string
+		tick       time.Duration
+		bufMaxSize int
+		transport  http.RoundTripper
+		logger     *log.Logger
 	}
 
-	ESDataStream struct {
+	//ESLogger encode keyvals into json object. and store in a internal buf.
+	//the buf content will be synced to elastich search datastream in tick
+	//period or if buf size exceed bufMaxSize
+	ESLogger struct {
 		url       string
-		config    ESDataStreamConfig
+		config    ESLoggerConfig
 		data      chan map[string]interface{}
 		buf       *bytes.Buffer
 		transport http.RoundTripper
-		logger    *log.Logger
 	}
 )
 
@@ -40,48 +45,74 @@ var (
 	createOp = []byte(`{"create":{}}`)
 )
 
-//NewESDataStream create a new ESDataStream instrance.
-//config sepcific ealsticsearch address and log sync period
-func NewESDataStream(config ESDataStreamConfig, transport http.RoundTripper, logger *log.Logger) *ESDataStream {
-	c := config
-	if c.BufMaxSize == 0 {
-		c.BufMaxSize = DefaultMaxSize
-	}
-
-	if c.Tick == 0 {
-		c.Tick = DefaultDuration
-	}
-	return &ESDataStream{
-		url:       fmt.Sprintf("%s/%s/_bulk", config.Address, config.StreamName),
-		config:    c,
-		data:      make(chan map[string]interface{}, 32),
-		buf:       bytes.NewBuffer(make([]byte, 0, config.BufMaxSize)),
-		transport: transport,
-		logger:    logger,
+//NewConfig return a new ESLoggerConfig with sepcifc address(scheme://ip:port) and streamName
+func NewConfig(address string, streamName string) *ESLoggerConfig {
+	return &ESLoggerConfig{
+		address:    address,
+		streamName: streamName,
+		tick:       DefaultDuration,
+		bufMaxSize: DefaultMaxSize,
 	}
 }
 
-//Open start working goroutine send bulk request to elasticsearch periodly
-func (esds *ESDataStream) Open(ctx context.Context) error {
+//Tick specific sync duration instead of DefaultDuration
+func (eslc *ESLoggerConfig) Tick(d time.Duration) *ESLoggerConfig {
+	eslc.tick = d
+	return eslc
+}
+
+//BufMaxSize sepcific internal buf maxSize instread of DefaultMaxSize
+func (eslc *ESLoggerConfig) BufMaxSize(maxSize int) *ESLoggerConfig {
+	eslc.bufMaxSize = maxSize
+	return eslc
+}
+
+//Transport sepcific transport instance which used to build elastic client
+//if not specific the default http.Transport will be used
+func (eslc *ESLoggerConfig) Transport(rp http.RoundTripper) *ESLoggerConfig {
+	eslc.transport = rp
+	return eslc
+}
+
+//Logger spcific logger instance which used to write error log
+func (eslc *ESLoggerConfig) Loggger(logger *log.Logger) *ESLoggerConfig {
+	eslc.logger = logger
+	return eslc
+}
+
+//New create a new ESLogger instrance with eslc config
+func New(eslc *ESLoggerConfig) *ESLogger {
+	return &ESLogger{
+		config: *eslc,
+		url:    fmt.Sprintf("%s/%s/_bulk", eslc.address, eslc.streamName),
+		data:   make(chan map[string]interface{}, 32),
+		buf:    bytes.NewBuffer(make([]byte, 0, eslc.bufMaxSize)),
+	}
+}
+
+//Open start working goroutine encode log data into json object
+//send sync to elasticsearch datastream with bulk request
+func (esds *ESLogger) Open(ctx context.Context) error {
 	go func() {
-		ticker := time.NewTicker(esds.config.Tick)
+		ticker := time.NewTicker(esds.config.tick)
+		logger := esds.config.logger
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				if err := esds.putData(ctx); err != nil {
-					if esds.logger != nil {
-						esds.logger.Printf("putData error %s", err.Error())
+					if logger != nil {
+						logger.Printf("putData error %s", err.Error())
 					}
 				}
 
 			case raw := <-esds.data:
 				b, _ := json.Marshal(raw)
-				if esds.buf.Len()+len(b)+len(createOp)+2 > esds.config.BufMaxSize {
+				if esds.buf.Len()+len(b)+len(createOp)+2 > esds.config.bufMaxSize {
 					if err := esds.putData(ctx); err != nil {
-						if esds.logger != nil {
-							esds.logger.Printf("putData error %s", err.Error())
+						if logger != nil {
+							logger.Printf("putData error %s", err.Error())
 						}
 					}
 				}
@@ -97,7 +128,7 @@ func (esds *ESDataStream) Open(ctx context.Context) error {
 }
 
 //Log send data to working goroutine
-func (esds *ESDataStream) Log(keyvals ...interface{}) error {
+func (esds *ESLogger) Log(keyvals ...interface{}) error {
 	//build map[string]interface{} according keyvals
 	//copy from https://github.com/go-kit/log/blob/main/json_logger.go
 
@@ -123,7 +154,7 @@ func (esds *ESDataStream) Log(keyvals ...interface{}) error {
 	return nil
 }
 
-func (esds *ESDataStream) putData(ctx context.Context) error {
+func (esds *ESLogger) putData(ctx context.Context) error {
 	defer func() {
 		esds.buf.Reset()
 	}()
