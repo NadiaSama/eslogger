@@ -33,6 +33,7 @@ type (
 		data      chan map[string]interface{}
 		buf       *bytes.Buffer
 		transport http.RoundTripper
+		done      chan struct{}
 	}
 )
 
@@ -98,6 +99,8 @@ func (esds *ESLogger) Open(ctx context.Context) error {
 		logger := esds.config.logger
 		for {
 			select {
+			case <-esds.done:
+				return
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
@@ -125,6 +128,11 @@ func (esds *ESLogger) Open(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+//Close stop running goroutine
+func (esds *ESLogger) Close() {
+	close(esds.done)
 }
 
 //Log send data to working goroutine
