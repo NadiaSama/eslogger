@@ -74,7 +74,7 @@ func (eslc *ESLoggerConfig) Transport(rp http.RoundTripper) *ESLoggerConfig {
 	return eslc
 }
 
-//Logger spcific logger instance which used to write error log
+//Logger spcific logger instance which used to write error log during sync process
 func (eslc *ESLoggerConfig) Loggger(logger *log.Logger) *ESLoggerConfig {
 	eslc.logger = logger
 	return eslc
@@ -92,7 +92,7 @@ func New(eslc *ESLoggerConfig) *ESLogger {
 }
 
 //Open start working goroutine encode log data into json object
-//send sync to elasticsearch datastream with bulk request
+//and sync to elasticsearch datastream with bulk request
 func (esds *ESLogger) Open(ctx context.Context) error {
 	go func() {
 		ticker := time.NewTicker(esds.config.tick)
@@ -135,7 +135,7 @@ func (esds *ESLogger) Close() {
 	close(esds.done)
 }
 
-//Log send data to working goroutine
+//Log send data to working goroutine. the @timestamp field will append automatically
 func (esds *ESLogger) Log(keyvals ...interface{}) error {
 	//build map[string]interface{} according keyvals
 	//copy from https://github.com/go-kit/log/blob/main/json_logger.go
