@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -16,12 +17,13 @@ import (
 type (
 	//ESLoggerConfig define the config property which used to create ESlogger instance
 	ESLoggerConfig struct {
-		address    string
-		streamName string
-		tick       time.Duration
-		bufMaxSize int
-		transport  http.RoundTripper
-		logger     *log.Logger
+		address     string
+		streamName  string
+		tick        time.Duration
+		bufMaxSize  int
+		transport   http.RoundTripper
+		logger      *log.Logger
+		credentials string
 	}
 
 	//ESLogger encode keyvals into json object. and store in a internal buf.
@@ -78,6 +80,20 @@ func (eslc *ESLoggerConfig) Transport(rp http.RoundTripper) *ESLoggerConfig {
 func (eslc *ESLoggerConfig) Loggger(logger *log.Logger) *ESLoggerConfig {
 	eslc.logger = logger
 	return eslc
+}
+
+//BasicAuth set user, password which used to basic authentication
+func (eslc *ESLoggerConfig) BasicAuth(user, pass string) *ESLoggerConfig {
+	val := fmt.Sprintf("%s:%s", user, pass)
+	eslc.credentials = base64.StdEncoding.EncodeToString([]byte(val))
+	return eslc
+}
+
+func (eslc *ESLoggerConfig) authRequest(req *http.Request) *http.Request {
+	if len(eslc.credentials) != 0 {
+		req.Header.Add("Authorization", fmt.Sprintf("Basic %s", eslc.credentials))
+	}
+	return req
 }
 
 //New create a new ESLogger instrance with eslc config
@@ -174,6 +190,7 @@ func (esds *ESLogger) putData(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build request fail %w", err)
 	}
+	req = esds.config.authRequest(req)
 	req.Header.Add("Content-Type", "application/json")
 
 	var client *http.Client
