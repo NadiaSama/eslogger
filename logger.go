@@ -17,13 +17,14 @@ import (
 type (
 	//ESLoggerConfig define the config property which used to create ESlogger instance
 	ESLoggerConfig struct {
-		address     string
-		streamName  string
-		tick        time.Duration
-		bufMaxSize  int
-		transport   http.RoundTripper
-		logger      *log.Logger
-		credentials string
+		address          string
+		streamName       string
+		tick             time.Duration
+		bufMaxSize       int
+		transport        http.RoundTripper
+		logger           *log.Logger
+		credentials      string
+		disableTimestmap bool
 	}
 
 	//ESLogger encode keyvals into json object. and store in a internal buf.
@@ -80,6 +81,11 @@ func (eslc *ESLoggerConfig) Transport(rp http.RoundTripper) *ESLoggerConfig {
 func (eslc *ESLoggerConfig) Loggger(logger *log.Logger) *ESLoggerConfig {
 	eslc.logger = logger
 	return eslc
+}
+
+//DisabledTimeatmp disable automatically add the '@timestamp' field
+func (eslc *ESLoggerConfig) DisableTimestamp() {
+	eslc.disableTimestmap = true
 }
 
 //BasicAuth set user, password which used to basic authentication
@@ -168,7 +174,9 @@ func (esds *ESLogger) Log(keyvals ...interface{}) error {
 		merge(m, k, v)
 	}
 
-	m["@timestamp"] = time.Now().Format(time.RFC3339)
+	if !esds.config.disableTimestmap {
+		m["@timestamp"] = time.Now().Format(time.RFC3339)
+	}
 
 	select {
 	case esds.data <- m:
