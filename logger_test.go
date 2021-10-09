@@ -1,7 +1,6 @@
 package eslogger_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,7 +86,7 @@ func TestLogger(t *testing.T) {
 
 		cfg := eslogger.NewConfig(addr, streamName).Transport(tt)
 		logger := eslogger.New(cfg)
-		if err := logger.Open(context.Background()); err != nil {
+		if err := logger.Open(); err != nil {
 			t.Fatalf("open logger fail error=%s", err.Error())
 		}
 		if err := logger.Log("a", a, "b", b); err != nil {
@@ -98,7 +97,9 @@ func TestLogger(t *testing.T) {
 		}
 
 		time.Sleep(time.Second * 1)
-		logger.Close()
+		if err := logger.Close(); err != nil {
+			t.Errorf("logger close fail error=%s", err.Error())
+		}
 	})
 
 	t.Run("test buf size out of maxSize", func(t *testing.T) {
@@ -150,7 +151,7 @@ func TestLogger(t *testing.T) {
 
 		cfg := eslogger.NewConfig(addr, streamName).Transport(tt).BufMaxSize(1)
 		logger := eslogger.New(cfg)
-		if err := logger.Open(context.Background()); err != nil {
+		if err := logger.Open(); err != nil {
 			t.Fatalf("open logger fail error=%s", err.Error())
 		}
 		if err := logger.Log("a", a, "b", b); err != nil {
@@ -164,6 +165,8 @@ func TestLogger(t *testing.T) {
 		if count != 2 {
 			t.Errorf("invalid count %d", count)
 		}
-		logger.Close()
+		if err := logger.Close(); err != nil {
+			t.Errorf("logger close error=%s", err.Error())
+		}
 	})
 }

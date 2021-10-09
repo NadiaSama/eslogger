@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"reflect"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 type (
@@ -31,11 +33,12 @@ type (
 	//the buf content will be synced to elastich search datastream in tick
 	//period or if buf size exceed bufMaxSize
 	ESLogger struct {
-		url    string
-		config ESLoggerConfig
-		data   chan map[string]interface{}
-		buf    *bytes.Buffer
-		done   chan struct{}
+		url        string
+		config     ESLoggerConfig
+		data       chan map[string]interface{}
+		buf        *bytes.Buffer
+		done       chan struct{}
+		workerDone chan struct{}
 	}
 )
 
@@ -105,25 +108,26 @@ func (eslc *ESLoggerConfig) authRequest(req *http.Request) *http.Request {
 //New create a new ESLogger instrance with eslc config
 func New(eslc *ESLoggerConfig) *ESLogger {
 	return &ESLogger{
-		config: *eslc,
-		url:    fmt.Sprintf("%s/%s/_bulk", eslc.address, eslc.streamName),
-		data:   make(chan map[string]interface{}, 32),
-		buf:    bytes.NewBuffer(make([]byte, 0, eslc.bufMaxSize)),
-		done:   make(chan struct{}),
+		config:     *eslc,
+		url:        fmt.Sprintf("%s/%s/_bulk", eslc.address, eslc.streamName),
+		data:       make(chan map[string]interface{}, 32),
+		buf:        bytes.NewBuffer(make([]byte, 0, eslc.bufMaxSize)),
+		done:       make(chan struct{}),
+		workerDone: make(chan struct{}),
 	}
 }
 
 //Open start working goroutine encode log data into json object
 //and sync to elasticsearch datastream with bulk request
-func (esds *ESLogger) Open(ctx context.Context) error {
+func (esds *ESLogger) Open() error {
 	go func() {
+		defer close(esds.workerDone)
+		ctx := context.Background()
 		ticker := time.NewTicker(esds.config.tick)
 		logger := esds.config.logger
 		for {
 			select {
 			case <-esds.done:
-				return
-			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				if err := esds.putData(ctx); err != nil {
@@ -153,8 +157,16 @@ func (esds *ESLogger) Open(ctx context.Context) error {
 }
 
 //Close stop running goroutine
-func (esds *ESLogger) Close() {
+func (esds *ESLogger) Close() error {
 	close(esds.done)
+
+	select {
+	case <-esds.workerDone:
+		return nil
+	case <-time.After(time.Second):
+		return errors.Errorf("worker done timeout")
+	}
+
 }
 
 //Log send data to working goroutine. the @timestamp field will append automatically
